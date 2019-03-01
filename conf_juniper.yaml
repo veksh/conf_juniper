@@ -1,5 +1,5 @@
-# export ANSIBLE_CONFIG=~/works/sysadm/ansible-study/ansible.m1.cfg
-# export ANSIBLE_REMOTE_USER=alex-ans
+# export ANSIBLE_CONFIG=~/works/sysadm/ansible-study/ansible.cfg
+# export ANSIBLE_REMOTE_USER=jun_user
 #
 # ansible-playbook -l ex3300-test conf_juniper.yaml --check --diff
 
@@ -9,13 +9,13 @@
 # - python "ncclient" installed (in addition to usual jmespath etc) with `pip install netconf`
 # - netconf enabled on switch, ansible users are added (with `prepare_juniper.yaml`)
 # - switch
-#     - is included in inventory group "network-devices.<shop>" and "all-<shop> groups
+#     - is included in inventory group "network-devices.<site>" and "all-<site> groups
 #     - has "switch_modules" and "protected_ifaces" set in host_vars
 
 # tips:
 # - if interrupted and "users are currently editing" received: get PID from msg
 #   and kill session with "request system logout pid <pid>"
-# - current iface report is at http://weboffice.m0.maxidom.ru/switch-conf/m1/ex3300-test.html
+# - current iface report is at http://websever.site.com/switch-conf/site1/switch-name.html
 
 # restrictions and todo
 # - changing vlan name (while keeping tag) will fail because of collision with previous vlan
@@ -26,7 +26,7 @@
 #   could be obtained from device
 
 # used vars:
-# - group_vars/all-<shop>: local_shop, local_net, dns_domain
+# - group_vars/all-<site>: local_site, local_net, dns_domain
 # - group_vars/network-devices: default_vlans, default_trunk_types, conf_report_*
 # - group_vars/network-devices.<shop>: other_switch_names, shop_vlans, shop_trunk_types
 # - host_vars/<switch>: switch_modules, protected_ifaces
@@ -37,8 +37,6 @@
 
   # combine defaults with overrides and local additions
   vars:
-    # TODO: override is currently wrong: must be based on vlan tags not names
-    # all_vlans: "{{ default_vlans | combine(shop_specific_vlans|d({})) }}"
     all_vlans: "{{ (default_vlans | invert | combine ( (shop_vlans|d({})) | invert )) | invert }}"
     all_switch_names: "{{ other_switch_names + groups['network-devices.' + local_shop] }}"
     trunk_vlans_by_type: "{{ default_trunk_types | combine(shop_trunk_types|d({}))}}"
@@ -273,9 +271,9 @@
             {% set dummy = res.extend([{"vlan_id": vlan_id, "name": vlan_name}]) -%}
           {% endfor -%}
           {{ res }}
-      when: 
+      when:
         - conf_vlans|d(true)
-        - conf_vlans|d(true) != "false" 
+        - conf_vlans|d(true) != "false"
 
     - name: prepare configuration statements
       set_fact:
