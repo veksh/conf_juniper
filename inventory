@@ -1,0 +1,13 @@
+# global hosts to mention in playbooks
+[global-hosts]
+conf-host   ansible_ssh_host=webhost.example.com
+
+# all hosts
+[all.site1]
+ex3300-rp1  ansible_ssh_host=ex3300-rp1.site.example.com
+
+[network-devices.site1]
+ex3300-rp1
+
+[network-devices:children]
+network-devices.site

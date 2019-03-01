@@ -1,0 +1,70 @@
+<html lang="en">
+<head>
+<title>Interfaces: {{ device_name }}</title>
+<style type="text/css">
+
+body.tintf {font:bold 10pt arial,helvetica,geneva,sans-serif; color:black; background:white;}
+
+th.inthd   {font:bold 10pt arial,helvetica,geneva,sans-serif; color:white; background:#0066cc;
+            padding-left:4px; padding-right:4px;padding-bottom:2px}
+
+td.intnc   {font:10pt arial,helvetica,geneva,sans-serif; color:black; background:white;
+            vertical-align:top;}
+td.intcp   {font:10pt arial,helvetica,geneva,sans-serif; color:black; background:#ffffcc;
+            vertical-align:top;}
+td.intcf   {font:10pt arial,helvetica,geneva,sans-serif; color:black; background:lightgray;
+            vertical-align:top;}
+td.inthl   {font:10pt arial,helvetica,geneva,sans-serif; color:green; background:white;
+            vertical-align:top;}
+
+table.tintf {border_collapse: collapse;}
+
+</style>
+</head>
+<body class="tintf">
+
+<a href="./">UP</a> 
+
+<table border="0" width="800" class="tintf" summary="Interfaces">
+<tr><th class="inthd" scope="col">Interface</th>
+    <th class="inthd" scope="col">Host</th>
+    <th class="inthd" scope="col">Description</th>
+    <th class="inthd" scope="col">VLAN</th>
+    <th class="inthd" scope="col">Addr</th>
+    <th class="inthd" scope="col">Type</th>
+</tr>
+{% for iface in all_ifaces -%}
+<tr>
+    <td class="intnc" scope="row">{{ iface }}</td>
+  {% if iface in ifaces_props %}
+    {% set props = ifaces_props[iface] -%}
+    {% if props.mode == "disabled" %}
+      <td class="intcf">free</td>
+      <td class="intnc"></td>
+      <td class="intnc"></td>
+      <td class="intnc"></td>
+    {% else -%}
+      <td class="intnc">{{ props.host }}</td>
+      <td class="intnc">{{ props.desc }}</td>
+      <td class="intnc">{{ props.vlan }}</td>
+      <td class="intnc">{{ props.addr | d('')}}
+      <td class="inthl">{{ props.mode if props.mode != "simple" else "" }}</td>
+    {% endif %}
+  {% elif iface in protected_ifaces_props %}
+    {% set props = protected_ifaces_props[iface] -%}
+    <td class="intcp">special</td>
+    <td class="intcp">{{ props.desc }}</td>
+    <td class="intnc"></td>
+    <td class="intnc"></td>
+  {% else %}
+    <td class="intcf"><i>unknown</i></td>
+    <td class="intnc"></td>
+    <td class="intnc"></td>
+    <td class="intnc"></td>
+  {% endif %}
+</tr>
+{% endfor -%}
+</table>
+
+</body>
+</html>

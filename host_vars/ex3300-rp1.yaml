@@ -1,0 +1,19 @@
+# map of {module_index -> number_of_ports}; could be obtained by RPC
+switch_modules:
+  0: 48
+  1: 48
+  2: 48
+  3: 48
+  4: 48
+
+# all interfaces that are not explicitly configured are disabled by default (except `protected`)
+# set `disable_unused_interfaces: false` to manage only expicit subset and treat rest as "unknown"
+# disable_unused_interfaces: false
+
+# touching those is forbidden: uplinks, downlinks, aggregates etc
+# uplink on ae0 (xe-0/1/0 + xe-1/1/0)
+protected_ifaces:
+  ge-3/0/0:  {desc: "srv1-eth1"}
+  ge-4/0/1:  {desc: "srv1-eth2"}
+  ge-4/0/3:  {desc: "downlink"}
+

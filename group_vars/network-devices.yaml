@@ -1,0 +1,34 @@
+# all valid vlans and their tags
+# - usually 1-1 to subnets
+# - subnet address is not always == vlan tag: adm-video is 212.0/23 in u1, but vlan is 213
+# - mostly consistent across shops but with some quirks (like guards in m5/m7)
+#   so per-shop override is possible with `vlans_shop`
+#   like all_vlans: "{{ default_vlans | combine(shop_specific_vlans|d({})) }}"
+default_vlans:
+  DEFAULT_VLAN:   1
+  clients-tst:   10
+  wlan-adm:      83
+  wlan-users:    84
+  wlan-free:    112
+  adm-video:    213
+  adm-ap:       222
+
+# what to trunk for host with type = "NN"
+default_trunk_types:
+  phone:       [phones]
+  ap:          [wlan-adm, wlan-users]
+  ap-freewifi: [wlan-free]
+
+# host holding HTML exports of switch conf data; name from inventory
+# http://weboffice.m0.maxidom.ru/switch-conf/m1/ for test
+conf_report_host: conf-host
+# top-level dir; per-shop subdirs will hold conf data
+conf_report_root: "/apps/switch-conf"
+conf_report_group: "ansible-mng"
+# conf report flag, usually on
+conf_report_enabled: true
+
+# connection is local for 2.4 ("netconf" later)
+ansible_connection: local
+# use default 22 instead of netconf's 830
+ansible_ssh_port: 22

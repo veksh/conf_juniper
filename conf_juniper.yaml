@@ -1,0 +1,392 @@
+# export ANSIBLE_CONFIG=~/works/sysadm/ansible-study/ansible.m1.cfg
+# export ANSIBLE_REMOTE_USER=alex-ans
+#
+# ansible-playbook -l ex3300-test conf_juniper.yaml --check --diff
+
+# configure vlans and access ports on juniper switch
+
+# requirements:
+# - python "ncclient" installed (in addition to usual jmespath etc) with `pip install netconf`
+# - netconf enabled on switch, ansible users are added (with `prepare_juniper.yaml`)
+# - switch
+#     - is included in inventory group "network-devices.<shop>" and "all-<shop> groups
+#     - has "switch_modules" and "protected_ifaces" set in host_vars
+
+# tips:
+# - if interrupted and "users are currently editing" received: get PID from msg
+#   and kill session with "request system logout pid <pid>"
+# - current iface report is at http://weboffice.m0.maxidom.ru/switch-conf/m1/ex3300-test.html
+
+# restrictions and todo
+# - changing vlan name (while keeping tag) will fail because of collision with previous vlan
+#   name with same tag: vlans are only added and operation will fail if some vlan on switch
+#   already has tag NN (please fix manually)
+# - ranges are not currently checked for length; checks could be further improved
+# - configuration details (like number of modules and names of trunk and aggregate ports)
+#   could be obtained from device
+
+# used vars:
+# - group_vars/all-<shop>: local_shop, local_net, dns_domain
+# - group_vars/network-devices: default_vlans, default_trunk_types, conf_report_*
+# - group_vars/network-devices.<shop>: other_switch_names, shop_vlans, shop_trunk_types
+# - host_vars/<switch>: switch_modules, protected_ifaces
+
+- name: configure switch
+  hosts:
+    - all
+
+  # combine defaults with overrides and local additions
+  vars:
+    # TODO: override is currently wrong: must be based on vlan tags not names
+    # all_vlans: "{{ default_vlans | combine(shop_specific_vlans|d({})) }}"
+    all_vlans: "{{ (default_vlans | invert | combine ( (shop_vlans|d({})) | invert )) | invert }}"
+    all_switch_names: "{{ other_switch_names + groups['network-devices.' + local_shop] }}"
+    trunk_vlans_by_type: "{{ default_trunk_types | combine(shop_trunk_types|d({}))}}"
+
+  tasks:
+
+    - name: make sure that essential vars are defined
+      assert:
+        that:
+          - all_vlans is defined
+          - all_switch_names is defined
+          - inventory_hostname in all_switch_names
+          - "'DEFAULT_VLAN' in all_vlans"
+          - switch_modules is defined
+          - protected_ifaces is defined
+          - local_shop is defined
+          - local_net is defined
+          - dns_domain is defined
+        msg: "some essential var is missed, please check"
+
+    # common domain structure, file name is "domains-{shop}.yml" by convention
+    # default include dir is  "{{ inventory_dir }}/vars/" so no path is necessary
+    # indulded is "domains", array of "[{name: <shop>.maxidom.ru, addr: 10.x, subnets: ...}]"
+    - name: include domain data from common conf
+      include_vars: "domains-{{ local_shop }}.yml"
+
+    - name: extract local subnets from domain information
+      set_fact:
+        subnets: "{{ (domains | selectattr('name', 'match', dns_domain) | list)[0].subnets }}"
+
+    # build list of ifaces for all devices
+    # fields in iface description
+    #   - name: iface name, key, must be unique
+    #   - host: host name for iface report; for ranges: "host_start to host_end"
+    #   - desc: description for switch config, defaults to 'host' valule (above) if not given
+    #   - dev:  device; checked against valid devices list, filtered for application
+    #   - addr: host address for iface report; for ranges: "start_addr-end_addr"
+    #   - mode: "simple" for access port; others are trunks and must be in "trunk_vlans_by_type"
+    #   - vlan: access vlan for access ports, native vlan for trunks
+    #   - vlans: member vlans for trunks (from "trunk_vlans_by_type")
+    - name: construct lists of valid and configured interfaces
+      set_fact:
+        ifaces_to_conf: |
+          {% set res = [] -%}
+          {% for subnet in subnets if subnet.vlan|d(false) -%}
+            {% set subnet_addr = subnet.addr if '.' in subnet.addr|string else local_net ~ '.' ~ subnet.addr -%}
+            {### plain hosts -#}
+            {% for host in subnet.hosts if host.iface|d(false) -%}
+              {% set dummy = res.extend(
+                [{'desc':  host.desc|d(subnet.prefix|d('') ~ host.name ~ subnet.suffix|d('')),
+                  'host':  subnet.prefix|d('') ~ host.name ~ subnet.suffix|d(''),
+                  'dev':   host.device|d('missed'),
+                  'name':  host.iface,
+                  'addr':  subnet_addr ~ '.' ~ host.addr if host.addr else 'none',
+                  'vlan':  subnet.vlan,
+                  'vlans': trunk_vlans_by_type[host.trunk|d(subnet.trunk)]|d([]) if host.trunk|d(subnet.trunk|d(false)) else [],
+                  'mode':  host.trunk|d(subnet.trunk|d('simple'))}]) -%}
+            {% endfor -%}
+            {% for host_range in subnet.hosts if host_range.range|d(false) and host_range.ifaces|d(false) -%}
+              {### host ranges: ifaces is array -#}
+              {% set range_name = (subnet.prefix|d('')) ~ host_range.range ~ (subnet.suffix|d('')) -%}
+              {% set range_desc = (range_name % host_range.start) ~ ' to ' ~ (range_name % host_range.end) -%}
+              {% for iface in host_range.ifaces -%}
+                {% if "[" is not in iface -%}
+                  {### no []: simple iface -#}
+                  {% set dummy = res.extend(
+                    [{'desc':  host_range.desc|d(range_desc),
+                      'host':  range_desc,
+                      'dev':   host_range.device|d('missed'),
+                      'name':  iface,
+                      'addr':  subnet_addr ~ '.' ~ host_range.start ~ '-' ~ host_range.end,
+                      'vlan':  subnet.vlan,
+                      'vlans': [],
+                      'mode':  'simple'}]) -%}
+                {% else -%}
+                  {### [start-end]: range -#}
+                  {% set prefix = iface.split("[")[0] -%}
+                  {% set irange = iface.split("[")[1][0:-1].split("-") -%}
+                  {% for ind in range(irange[0]|int, irange[1]|int + 1) -%}
+                    {% set dummy = res.extend(
+                      [{'desc':  host_range.desc|d(range_desc),
+                        'host':  range_desc,
+                        'dev':   host_range.device|d('missed'),
+                        'name':  "%s%d" % (prefix, ind),
+                        'addr':  subnet_addr ~ '.' ~ host_range.start ~ '-' ~ host_range.end,
+                        'vlan':  subnet.vlan,
+                        'vlans': [],
+                        'mode':  'simple'}]) -%}
+                  {% endfor -%}
+                {% endif -%}
+              {% endfor -%}
+            {% endfor -%}
+          {% endfor -%}
+          {{ res }}
+        valid_iface_names: |
+          {% set res = [] -%}
+          {% for module, num_ports in switch_modules | dictsort -%}
+            {% for iface in range(num_ports) -%}
+              {% set dummy = res.extend(["ge-%d/0/%d" % (module, iface)]) -%}
+            {% endfor -%}
+          {% endfor -%}
+          {{ res }}
+
+    - name: construct lists of unconfigured ifaces (to disable)
+      set_fact:
+        ifaces_to_disable: |
+          {% set res = [] -%}
+          {% set configured_iface_names = ifaces_to_conf | selectattr('dev', 'match', inventory_hostname) | map(attribute='name') | list -%}
+          {% set protected_iface_names = protected_ifaces.keys() | list -%}
+          {% for iface_name in valid_iface_names if iface_name not in configured_iface_names and iface_name not in protected_iface_names -%}
+            {% set dummy = res.extend(
+              [{'dev':  inventory_hostname,
+                'name': iface_name,
+                'mode': 'disabled'}]) -%}
+          {% endfor -%}
+          {{ res }}
+
+    - name: construct final list of ifaces
+      set_fact:
+        ifaces: "{{ ifaces_to_conf + (ifaces_to_disable if disable_unused_interfaces|d(true) else [])}}"
+
+    # set_fact outputs facts with "-v" already
+    - name: output list of interfaces
+      debug:
+        var: ifaces
+        verbosity: 1
+
+    - name: perform checks
+      block:
+
+        # does not check trunks like AP, phones: assume "trunk_vlans_by_type" is correct :)
+        - name: check that all vlans in domain config do exist
+          assert:
+            that: "{{ all_vlan_names | difference(good_vlan_names) | length == 0 }}"
+            msg: "some vlan names are bad: {{ all_vlan_names | difference(good_vlan_names) }}"
+          vars:
+            all_vlan_names: "{{ ifaces | json_query('[].vlan') }}"
+            good_vlan_names: "{{ all_vlans.keys() | list }}"
+
+        - name: check that all ifaces have empty or correct types
+          assert:
+            that: "{{ all_iface_types | difference(good_iface_types) | length == 0 }}"
+            msg:  "some iface types are bad: {{ all_iface_types | difference(good_iface_types) }}"
+          vars:
+            all_iface_types: "{{ ifaces | json_query('[?mode!=`simple` && mode!=`disabled`].mode') | unique | list }}"
+            good_iface_types: "{{ trunk_vlans_by_type.keys() | list }}"
+
+        - name: check that all device names correspond to actual devices
+          assert:
+            that: "{{ all_device_names | difference(all_switch_names) | length == 0}}"
+            msg: "some device names are bad: {{ all_device_names | difference(all_switch_names) }}"
+          vars:
+            all_device_names: "{{ ifaces | json_query('[].dev') | unique }}"
+
+        - name: check that interface names are unique
+          assert:
+            that: "{{ our_iface_names|unique|length == our_iface_names|length }}"
+            msg: "some interface names are not unique:  {{ our_iface_names | duplicate }}"
+
+        - name: check that no protected interfaces are affected
+          assert:
+            that: "{{ our_iface_names|intersect(protected_iface_names)|length == 0}}"
+            msg: "some protected ifaces are affected: {{ our_iface_names|intersect(protected_iface_names) | sort }}"
+          vars:
+            protected_iface_names: "{{ protected_ifaces.keys() | list }}"
+
+        - name: check that all assigned interfaces are present on switch
+          assert:
+            that: "{{ our_iface_names | difference(valid_iface_names) | length == 0 }}"
+            msg: "some interface names are invalid for this switch: {{ our_iface_names| difference(valid_iface_names) | sort }}"
+
+        - name: check that subnet addresses are unique
+          assert:
+            that:
+              - "{{ all_subnets|unique|length == all_subnets|length }}"
+            msg: |
+              some subnet address (from {{ all_subnets | duplicate }}) is not unique
+          vars:
+            all_subnets: "{{ subnets | json_query('[].addr') }}"
+
+        - name: check that all vlans are unique
+          assert:
+            that:
+              - "{{ all_vlans|unique|length == all_vlans|length }}"
+            msg: |
+              some vlan name (from {{ all_vlans | duplicate }}) is not unique
+          vars:
+            all_vlans:   "{{ subnets | json_query('[].vlan') }}"
+          when: vlan_is_uniq|d(true) != "false"
+
+        # does not really check ranges (could overlap); also done in DNS config
+        - name: check that all host names are unique
+          assert:
+            that: "{{ all_host_names|unique|length == all_host_names|length }}"
+            msg: "some host names are not unique in {{ all_host_names | duplicate }}"
+          vars:
+            all_host_names: "{{ subnets | json_query('[].hosts[].name') }}"
+
+        # also does not check ranges and interfaces w/o ports; better do it in DNS config
+        - name: check that all host IP addresses are unique
+          assert:
+            that: "{{ all_host_ips|unique|length == all_host_ips|length }}"
+            msg: "some host IPs are not unique in {{ all_host_ips | duplicate }}"
+          vars:
+            all_host_ips: "{{ ifaces | json_query('[?mode!=`disabled` && !contains(addr, `-`)].addr') }}"
+
+      vars:
+        our_iface_names: "{{ ifaces | selectattr('dev', 'match', inventory_hostname) | map(attribute='name') | list}}"
+
+    # create only vlans that are used on this switch; creating all would be also trivial,
+    #   but "all_vlans" is additive and most of them are not required in shops
+    # mb also:
+    # - protect management (vlan 208) somehow
+    # - set "description"
+    # notes:
+    # - "aggregate" is not very effective as of 2.4: apply (or check) for ex3300 takes
+    #   30-40s even if no actual changes are performed
+    # - changing vlan tag could fail if another vlan with same tag is already present:
+    #   commit fails with "tag value NNN is being used by more than one vlan", and situation
+    #   must be manually resolved; other changes in vlan tag or vlan name is ok
+    # - unused vlans are not deleted for now (not so trivial to do and a bit unsafe)
+    - name: configure vlans on device
+      junos_vlan:
+        aggregate: "{{ dev_vlans_agg }}"
+      vars:
+        native_vlan_names: "{{ ifaces | json_query('[].vlan') }}"
+        trunk_vlan_names:  "{{ ifaces | json_query('[].vlans | []') }}"
+        all_vlan_names:    "{{ (native_vlan_names + trunk_vlan_names) | unique }}"
+        dev_vlans_agg: |
+          {% set res = [] -%}
+          {% for vlan_name, vlan_id in all_vlans | dictsort if vlan_name in all_vlan_names -%}
+            {% set dummy = res.extend([{"vlan_id": vlan_id, "name": vlan_name}]) -%}
+          {% endfor -%}
+          {{ res }}
+      when: 
+        - conf_vlans|d(true)
+        - conf_vlans|d(true) != "false" 
+
+    - name: prepare configuration statements
+      set_fact:
+        # will clear all the settings, could be unwanted (policies etc)
+        # also: aggregates with `set interaces <iface> ether-options 802.3ad ae<X>`
+        #   with usual unit 0 conf for ae<X>
+        # also: speed limit for long-distance links
+        #   ether-options {
+        #       speed {
+        #           100m;
+        #       }
+        #   }
+        conf_lines: |-
+          {% for iface in this_switch_ifaces -%}
+            {% set u0e = 'interfaces ' + iface.name + ' unit 0 family ethernet-switching' -%}
+            delete interfaces {{ iface.name }}
+            {% if iface.mode == "disabled" -%}
+              set interfaces {{ iface.name }} disable
+              set {{ u0e }}
+            {% else -%}
+              set interfaces {{ iface.name }} description "{{ iface.desc | default('conf by ansible') }}"
+              {% if iface.mode == "simple" -%}
+                set {{ u0e }} vlan members {{ iface.vlan |d('DEFAULT_VLAN')}}
+              {% else -%}
+                set {{ u0e }} port-mode trunk
+                set {{ u0e }} vlan members [ {{ iface.vlans | join(' ') }} ]
+                {% if "vlan" in iface -%}
+                  set {{ u0e }} native-vlan-id {{ iface.vlan }}
+                {% endif -%}
+              {% endif -%}
+            {% endif -%}
+          {% endfor -%}
+      vars:
+        this_switch_ifaces: "{{ ifaces | selectattr('dev', 'match', inventory_hostname) | list }}"
+
+    # "-v" outputs set_fact results above anyway, but all joined to one line
+    - name: output list of set commands
+      debug:
+        msg: "{{ conf_lines.split('\n') }}"
+        verbosity: 1
+
+    # notes
+    # - could use user_id in commit msg with (default) gather_facts == true (for localhost facts)
+    # - error message is rather cryptic (but at least multi-line with "stdout_callback = debug")
+    # - could also commit in 2 stages with 1 minute delay
+    #     - 1st: confirm = 1
+    #     - 2nd: confirm_commit = true
+    # - sometimes times out with "file not found" for local socket
+    #     - timeout in provider does not really help, neither [persistent_connection] timeouts
+    #     - changes are actually committed for me, timeout is while reading them back
+    #     - adding 2nd retry is stupid, but works :(
+    # - see also: https://junos-ansible-modules.readthedocs.io/en/2.1.0/juniper_junos_config.html
+    - name: apply configuration to device
+      junos_config:
+        lines: "{{ conf_lines.split('\n') }}"
+        update: replace
+        comment: "modified by {{ ansible_user_id }}@{{ ansible_nodename }} with ansible"
+        provider:
+          # does not really help
+          timeout: 60
+      # stupid way to deal with connection timeouts
+      register: conf_apply_res
+      until: conf_apply_res is success
+      retries: 1
+      delay: 0
+
+    - name: create temp report dir
+      tempfile:
+        state: directory
+      register: tempdir_res
+      when: conf_report_enabled
+      changed_when: false
+
+    - name: generate html report
+      template:
+        src:  "{{ inventory_dir }}/templates/iface_report.html.j2"
+        dest: "{{ tempdir_res.path|d('.') }}/{{ inventory_hostname }}.html"
+      vars:
+        device_name: "{{ inventory_hostname }}"
+        all_ifaces: "{{ valid_iface_names }}"
+        ifaces_props: "{{ ifaces | selectattr('dev', 'match', inventory_hostname) | to_dict('name') }}"
+        protected_ifaces_props: "{{ protected_ifaces }}"
+      delegate_to: localhost
+      diff: false
+      when: conf_report_enabled
+      changed_when: false
+
+    - name: make sure remote dir for conf reports exist
+      file:
+        dest: "{{ conf_report_root }}/{{ local_shop }}"
+        state: directory
+        group: "{{ conf_report_group }}"
+        mode:  "g+rwx"
+      delegate_to: "{{ conf_report_host }}"
+      when: conf_report_enabled
+
+    - name: upload switch configration report
+      copy:
+        src:  "{{ tempdir_res.path|d('.') }}/{{ inventory_hostname }}.html"
+        dest: "{{ conf_report_root }}/{{ local_shop }}/{{ inventory_hostname }}.html"
+        group: "{{ conf_report_group }}"
+        mode:  "g+rw"
+      diff: false
+      delegate_to: "{{ conf_report_host }}"
+      when:
+        - conf_report_enabled
+        - not ansible_check_mode
+
+    - name: remove temp report dir
+      file:
+        dest: "{{ tempdir_res.path|d('.') }}"
+        state: absent
+      when: conf_report_enabled
+      changed_when: false

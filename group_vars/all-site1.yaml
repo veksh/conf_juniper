@@ -1,0 +1,4 @@
+# local shop and net for DNS and vlan config
+local_shop: site1
+local_net: "10.1"
+dns_domain: "{{ local_shop }}.example.com"

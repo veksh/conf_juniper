@@ -1,0 +1,16 @@
+# list of other (non-managed) switches that could be mentioned as `device` in domain conf
+# like all_switch_names: "{{ other_switch_names + groups['network-devices.' + local_shop] }}"
+other_switch_names:
+  - ex2300-rp2
+  - ex4600-site1
+
+# add (or override) mappings from `default_vlans` with local specifics
+shop_vlans:
+  only-here: 29
+
+# additional trunk types
+# shop_trunk_types:
+#   ap-sc: [wlan-office]
+
+# there is some large subnet with /23 mask
+vlan_is_uniq: "false"

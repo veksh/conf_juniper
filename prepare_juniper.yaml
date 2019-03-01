@@ -1,0 +1,109 @@
+# export ANSIBLE_CONFIG=~/works/sysadm/ansible-study/ansible.m1.cfg
+# export ANSIBLE_REMOTE_USER=alex
+#
+# ansible-playbook -l ex3300-test prepare_juniper.yaml --diff
+
+# prepare switch for ansible management: enable netconf, create users
+
+# requirements:
+# - python "ncclient" is installed
+#
+#         pip install ncclient
+#
+# - switch is added to inventory (any group, no vars are used)
+#
+#         [network-devices]
+#         ex3300-test   ansible_ssh_host=ex3300-test.m1.maxidom.ru
+#
+# - admin access to switch, key auth or login/password (specify `-u <user> -k`)
+#
+#         export ANSIBLE_REMOTE_USER=alex
+#
+
+- name: configure switch for ansible management
+  hosts:
+    - all
+
+  vars:
+    # permissions for ansible login class (+ vlan)
+    ansible_class_permissions:
+      - admin
+      - clear
+      - configure
+      - interface
+      - interface-control
+      - view
+      - view-configuration
+    # inline keys are a bit ugly
+    ans_users:
+      - name: alex-ans
+        key: >-
+          AAAAB3NzaC1yc2EAAAADAQABAAABAQDNf1GrvoEKZAcGRtHeG8tSkJizssAH+tdcnoqgdy+FukIBJE6s7KhPxD+UT
+          oqnGTX+ea5bd4zxrNk4Y9hzQQp+FwMyVjZmgF7c3K8DJjcNzArs8ZrqBAJ4eSYSk2oGF/fWeiMQwiSSsDg3q7xyNb
+          CF0Y26H8Plt9RWImK7IrjVqFERzbql/ANp40JXb63KIbOFU3ABjLRFXg+E+ALSo+jaInVN1qA+vgx9/zBaTyD6s/D
+          tAT6I5prxWxgfuTieAyUXuCyvOind5+ylAlZ7vv1DAqBVMz/mw/ehuECo4NaqpRcrwz9KM+eaSXCyW8acAUqQ6h8b
+          psKVPOGqAGli4N6Z
+        hosts: [10.1.11.6, 10.1.11.7, 10.1.83.4, 10.1.250.133, 10.0.45.82]
+      - name: tolik-ans
+        key: >-
+          AAAAB3NzaC1yc2EAAAADAQABAAACAQC+kVZqxZJawh5enW5ad8rBWt9H42DMXN/FWXEr0psK/CIOkDxTNNiloPyle
+          x9LcJm260HOfBRLnc8YQX+mXdayuzDIFF16cShUlV+stWF8ihx0H8AUlIkS30A1yepeFC7e8NUERoB0a+V8X93/Ee
+          ky1BUx4zm06nqR3n1zBS9p2EIsw+4c7TfZKMSZr5qa3IqV2TOx2b6dXI2/hyNNv23V3UX6fCnvZptwkvMnEvbpOlE
+          pVA4k3ZtFz8w2oeu23Enyx3HZuJr7e+2G6O0CMciryYeDSmhl5cLp6azjvsvmoS73Kjz6P7CfKObbWKTLZorI8KwI
+          zdHWqH4hwXufCXYQmde0Y6r6e+DEnPfrue3C26Z9qNiUiRlt3aqMymk251N5BSOPVdrqjNeZF4YqujkNjmGtyZjTJ
+          cTzKIwNJqxYMCmUvCa7cPW8yvGxHJGXT95S502WxBpCadIvXj5d8zb/fhGynv/syyLl+9955zynCcB4zPbQzYqR5v
+          rtLiwarp9kvGDhM5dGz8vwGAubEvFT3TwkTaaJIA8s9/ZcXUnRP9/luM+FVG6Hd625IjqKaLp9d7Ljh/a1Z8VBe8H
+          CO/bBVUBGkPnjv7knh3IJ4o4mjqDAezvsvQJA+uqe93hOogTz+hRMkRVWMZjH1+GSQOREAoOHyGiKPsZEjf+uVG4b
+          nw==
+        hosts: [10.1.11.1, 10.0.45.82]
+      - name: knjaz-ans
+        key: >-
+          AAAAB3NzaC1yc2EAAAADAQABAAABAQCaGnOcBE41GAcb6ctaf++P92m8Oa1dJjhrH0awYUdDf51fqcfwJoZk/sQxu
+          KAmNTlvwRkx7cGsAHRshpNmkB1bdFa114zBj5r0mVurLVi/mKoU+3lgUPyW+dydcK+qaYl+J0sCHKGsT4aJf1xmHr
+          bjWFw3H72/mUhMYPIKdEb4pav1ALkxBu6Pg19k4CPH6xKHNW35MCdHbVNhiu1pM7tS2A7MD8OqeDt6A+6yzLQv/ST
+          MHvH0uCaxRu7rNwQQYpcsuTBF4SoHE8AD1yeZlN5dDGkFZ94zwTqbFO3tq1d0cgqu69xLpPwXyCV7MMg9Lqaq1/ix
+          /NoTK6xotrAHcM5F
+        hosts: [10.1.11.38, 10.0.45.82]
+
+  tasks:
+
+    - name: check that current user is not ansible one
+      assert:
+        that:
+          - ansible_user_id not in ans_users
+        msg: "please perform initial conf as non-ansible user"
+
+
+    # enable on default port 830, although our connections will go to 22
+    - name: enable netconf on switch
+      junos_netconf:
+        state: present
+
+    - name: generate initial config
+      set_fact:
+        initial_conf_lines: |-
+          set system login class ansible permissions [ {{ ansible_class_permissions | join(' ') }} ]
+          set system login class ansible allow-configuration "vlans"
+          {% for user in ans_users -%}
+            set system login user {{ user.name }} class ansible
+            set system login user {{ user.name }} authentication ssh-rsa "ssh-rsa {{ user.key | replace(' ', '')}}" from {{ user.hosts | join(',') }}
+          {% endfor -%}
+
+    - name: display it
+      debug:
+        msg: "{{ initial_conf_lines.split('\n') }}"
+        verbosity: 1
+
+    - name: apply configuration to device
+      junos_config:
+        lines: "{{ initial_conf_lines.split('\n') }}"
+        update: replace
+        comment: "modified by {{ ansible_user_id }}@{{ ansible_nodename }} with ansible"
+        provider:
+          # does not really help
+          timeout: 60
+      # stupid way to deal with connection timeouts
+      register: conf_apply_res
+      until: conf_apply_res is success
+      retries: 1
+      delay: 0

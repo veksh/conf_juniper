@@ -1,0 +1,38 @@
+---
+domains:
+  - name: "site1.example.com"
+    addr: "10.1"
+    reverse: "1.10"
+    dom_ou: "site1,ou=example"
+    ns:
+      - {name: "{{ inventory_hostname }}", addr: "{{ tinydns_ip|d('127.0.0.1') }}", desc: "site1 authority"}
+    hosts:
+      - {name: "proxy", addr: "10.0.5.1", type: "+"}
+    subnets:
+      - addr: 10
+        name: "clients"
+        suffix: "-site1"
+        vlan: clients-tst
+        features: ['dhcp']
+        hosts:
+          - {name: "host1", addr: 1, device: ex3300-rp1, iface: ge-0/0/30, mac: "aa:bb:cc:dd:ee:ff", trunk: phone}
+          - {name: "host2", addr: 2, device: ex3300-rp1, iface: ge-1/0/4}
+
+      - addr: 213
+        name: adm-video
+        desc: "cameras"
+        suffix: "-site1"
+        vlan: adm-video
+        hosts:
+          - {range: "camera%d", start: 1, end: 36, desc: "1st set", device: ex3300-rp1, ifaces: ["ge-0/0/[12-47]"]}
+          - {name: "camera-tmp1", addr: 241, device: ex3330-rp1, iface: ge-0/0/15}
+
+      - addr: 222
+        name: adm-ap
+        desc: WLAN access points and controllers
+        vlan: adm-ap
+        trunk: ap
+        suffix: "-site1"
+        hosts:
+          - {name: "ruckus-ap1", addr: 1, device: ex3300-rp1, iface: "ge-0/0/0"}
+          - {name: "ruckus-ap2", addr: 2, device: ex2300-rp2, iface: "ge-0/0/0"}
