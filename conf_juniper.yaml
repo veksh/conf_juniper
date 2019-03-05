@@ -15,6 +15,11 @@
 # tips:
 # - if interrupted and "users are currently editing" received: get PID from msg
 #   and kill session with "request system logout pid <pid>"
+# - if "unable to open shell" or connection takes more than several minutes
+#     - check for stale "ansible-connection" process left from previous attempts
+#     - remove old sockets from ~/.ansible/pc 
+#     - try to connect with ssh as ansible user
+#     - try setting remote port explicitly (exort ANSIBLE_REMOTE_PORT=830 or 22)
 # - current iface report is at http://websever.site.com/switch-conf/site1/switch-name.html
 
 # restrictions and todo
