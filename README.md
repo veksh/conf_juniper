@@ -1,18 +1,18 @@
 # Features
 
-- ansible 2.4 to 2.7 support, ok with junos from 13 up to 15
-- flexible port configuration from site-specific yaml file
+- ansible 2.4 to 2.7 support, ok with junos from 12 up to 15
+- flexible port configuration with site-wide yaml file
     - per vlan sections
     - one file for multiple devices
     - support for plain access ports or trunks of several pre-configured
       types (like "phone" or "AP"); default trunk type could be specified
       at vlan level
     - support for interface ranges
-- extensive check for configuration file sanity: interface indexes must be
-  unique, all device names must be valid etc
-- unused ports are disabled by default (configurable), some ports could
-  be marked as "protected" and excluded from configuration (e.g uplinks and
-  downlinks or aggregate ports)
+- extensive check for configuration file correctness: interface indexes must 
+  be unique, all device names must be valid etc
+- unused ports are disabled by default (configurable)
+- some ports could be marked as "protected" and excluded from configuration 
+  (e.g uplinks and downlinks or aggregate ports)
 - support for multiple sites with common configuration + local overrides
 - HTML report of configuration data could be uploaded to external web server
   for future reference
